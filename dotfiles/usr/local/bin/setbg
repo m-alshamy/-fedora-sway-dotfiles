@@ -1,0 +1,44 @@
+#!/bin/bash
+
+# إجبار النظام على طلب صلاحيات الجذر فوراً لتجنب فشل النسخ
+if [ "$EUID" -ne 0 ]; then
+    echo "premission denied , use : sudo setbg /path/to/image"
+    exit 1
+fi
+
+# التحقق من تمرير مسار الصورة كمعامل
+if [ -z "$1" ]; then
+    echo "add bg path"
+    exit 1
+fi
+
+IMG_PATH="$1"
+IMG_NAME=$(basename "$IMG_PATH")
+TARGET_DIR="/usr/share/backgrounds"
+TARGET_PATH="$TARGET_DIR/$IMG_NAME"
+
+# استخراج حسابك كمستخدم أصلي حتى من داخل بيئة الجذر
+REAL_USER="${SUDO_USER:-$USER}"
+USER_HOME=$(eval echo ~"$REAL_USER")
+USER_UID=$(id -u "$REAL_USER")
+
+# تنفيذ المهام التي تتطلب صلاحيات عليا (النسخ والاستبدال الموضعي في sddm)
+cp "$IMG_PATH" "$TARGET_PATH"
+sed -i "s|^[[:space:]]*background=.*|background=$TARGET_PATH|" /usr/share/sddm/themes/03-sway-fedora/theme.conf
+
+# تعديل ملفاتك الشخصية عبر خفض الصلاحيات والاستبدال الموضعي المباشر
+sudo -u "$REAL_USER" sed -i "s|^[[:space:]]*image=.*|image=$TARGET_PATH|" "$USER_HOME/.config/swaylock/config"
+sudo -u "$REAL_USER" sed -i "s|^[[:space:]]*output[[:space:]]*\*[[:space:]]*bg.*|output * bg $TARGET_PATH fill|" "$USER_HOME/.config/sway/config"
+
+# العثور الدقيق على مقبس Sway المفقود
+SWAY_SOCKET=$(ls /run/user/"$USER_UID"/sway-ipc.*.sock 2>/dev/null | head -n 1)
+
+if [ -z "$SWAY_SOCKET" ]; then
+    echo "cannot find : sway-ipc"
+    exit 1
+fi
+
+# حقن المتغير وتحديث الواجهة بصلاحياتك كـمستخدم عادي
+sudo -u "$REAL_USER" SWAYSOCK="$SWAY_SOCKET" swaymsg reload
+
+echo "bg changed successfully"
